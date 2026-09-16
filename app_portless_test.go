@@ -89,3 +89,48 @@ func TestHandlePortlessDNSStartFailureKeepsOtherErrorsFatal(t *testing.T) {
 		t.Fatalf("unexpected fallback logs: %+v", app.logBuf[cfg.ID])
 	}
 }
+
+func TestHandlePortlessSetupPersistenceFailureDegradesWithRecommendation(t *testing.T) {
+	app := &App{
+		manager: ssh.NewManager(func(ssh.StatusEvent) {}, nil),
+		logBuf:  make(map[string][]config.LogEntry),
+	}
+	cfg := config.TunnelConfig{ID: "bastion", Name: "bastion"}
+	err := &dns.PersistenceError{
+		Message:        "the helper service is approved, but its prerequisites never took effect",
+		Recommendation: "reinstall the app",
+		Command:        "sudo sfltool resetbtm",
+	}
+
+	if !app.handlePortlessSetupPersistenceFailure(cfg, err) {
+		t.Fatal("a PersistenceError should degrade instead of remaining fatal")
+	}
+	if app.portlessFallback == nil {
+		t.Fatal("PersistenceError should persist the fallback warning")
+	}
+	if app.portlessFallback.Recommendation != err.Recommendation || app.portlessFallback.Command != err.Command {
+		t.Fatalf("fallback = %+v, want recommendation/command carried over from %+v", app.portlessFallback, err)
+	}
+	logs := app.logBuf[cfg.ID]
+	if len(logs) != 1 || logs[0].Level != "warn" {
+		t.Fatalf("fallback logs = %+v, want one warning", logs)
+	}
+}
+
+func TestHandlePortlessSetupPersistenceFailureKeepsOtherErrorsFatal(t *testing.T) {
+	app := &App{
+		manager: ssh.NewManager(func(ssh.StatusEvent) {}, nil),
+		logBuf:  make(map[string][]config.LogEntry),
+	}
+	cfg := config.TunnelConfig{ID: "bastion", Name: "bastion"}
+
+	if app.handlePortlessSetupPersistenceFailure(cfg, errors.New("resolving current executable: no such file")) {
+		t.Fatal("a plain error must remain fatal")
+	}
+	if app.portlessFallback != nil {
+		t.Fatal("a plain error must not show the fallback warning")
+	}
+	if len(app.logBuf[cfg.ID]) != 0 {
+		t.Fatalf("unexpected fallback logs: %+v", app.logBuf[cfg.ID])
+	}
+}

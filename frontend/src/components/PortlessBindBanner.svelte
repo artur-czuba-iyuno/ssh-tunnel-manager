@@ -16,6 +16,8 @@
   interface DNSFallback {
     tunnelId: string;
     message: string;
+    recommendation?: string;
+    command?: string;
   }
 
   let err: BindError | null = null;
@@ -82,6 +84,16 @@
       /* clipboard errors are non-fatal */
     }
   }
+
+  async function copyFallbackCommand() {
+    if (!fallback?.command) return;
+    try {
+      await CopyToClipboard(fallback.command);
+      showToast("Command copied", "success");
+    } catch {
+      /* clipboard errors are non-fatal */
+    }
+  }
 </script>
 
 {#if fallback}
@@ -90,7 +102,16 @@
       <span class="bind-tag warning">[ PORTLESS FALLBACK ]</span>
       <span class="bind-msg">{fallback.message}</span>
     </div>
+    {#if fallback.recommendation}
+      <span class="bind-msg">{fallback.recommendation}</span>
+    {/if}
+    {#if fallback.command}
+      <code class="bind-cmd">{fallback.command}</code>
+    {/if}
     <div class="bind-actions">
+      {#if fallback.command}
+        <button class="bind-btn" on:click={copyFallbackCommand}>[ COPY CMD ]</button>
+      {/if}
       <button class="bind-btn" on:click={() => (fallback = null)}>[ DISMISS ]</button>
     </div>
   </div>
