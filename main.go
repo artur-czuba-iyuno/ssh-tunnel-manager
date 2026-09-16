@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"embed"
+	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -21,7 +23,12 @@ import (
 var assets embed.FS
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	logWriter := io.Writer(os.Stderr)
+	if logFile := openLogFile(); logFile != nil {
+		defer logFile.Close()
+		logWriter = io.MultiWriter(os.Stderr, logFile)
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})))
 
@@ -123,4 +130,25 @@ func main() {
 		slog.Error("wails application error", "error", err)
 		os.Exit(1)
 	}
+}
+
+// openLogFile opens the persistent app log at
+// ~/.config/ssh-tunnel-manager/app.log, appending across runs, so startup and
+// Portless diagnostics survive even when the process is launched by a
+// LaunchAgent/systemd unit that discards stderr. Logging still works (to
+// stderr only) when this fails; nothing else depends on the file existing.
+func openLogFile() *os.File {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	dir := filepath.Join(home, ".config", "ssh-tunnel-manager")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "app.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil
+	}
+	return f
 }
