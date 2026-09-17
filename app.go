@@ -78,6 +78,12 @@ type App struct {
 	// portlessFallback persists the current degradation so the frontend can
 	// recover it even when auto-connect emitted the first event before mount.
 	portlessFallback *PortlessFallbackStatus
+	// portlessSetupErr caches a confirmed *dns.PersistenceError for this
+	// process's lifetime, so auto-connecting several portless tunnels only
+	// repeats the elevated setup dance (and any admin prompt) once instead
+	// of once per tunnel — EnsureSystemConfigured has no cheaper way to
+	// tell "still broken" from "never tried" than actually attempting it.
+	portlessSetupErr *dns.PersistenceError
 }
 
 type sharedPortlessRegistry interface {
@@ -475,6 +481,14 @@ func (a *App) ensurePortlessReady(cfg config.TunnelConfig) error {
 		PrivilegedPortRedirect: tunnelRequiresPrivilegedPortRedirect(cfg),
 	}
 	if !dns.IsSystemConfigured(requirements) {
+		if a.portlessSetupErr != nil {
+			// Already confirmed this run that setup won't persist for this
+			// machine — go straight to the fallback banner instead of
+			// repeating the elevated dance (and any admin prompt) for
+			// every tunnel that auto-connects.
+			a.handlePortlessSetupPersistenceFailure(cfg, a.portlessSetupErr)
+			return nil
+		}
 		slog.Info("portless: system not configured, prompting for admin setup")
 		if a.ctx != nil {
 			runtime.EventsEmit(a.ctx, "portless:setup-started")
@@ -488,6 +502,10 @@ func (a *App) ensurePortlessReady(cfg config.TunnelConfig) error {
 			runtime.EventsEmit(a.ctx, "portless:setup-finished", payload)
 		}
 		if err != nil {
+			var persistErr *dns.PersistenceError
+			if errors.As(err, &persistErr) {
+				a.portlessSetupErr = persistErr
+			}
 			if a.handlePortlessSetupPersistenceFailure(cfg, err) {
 				return nil
 			}
@@ -574,7 +592,14 @@ func (a *App) handlePortlessSetupPersistenceFailure(cfg config.TunnelConfig, err
 	a.appendTunnelLog(cfg.ID, "warn", persistErr.Message)
 	slog.Warn("portless system setup did not persist; continuing with local-port fallback",
 		"tunnel", cfg.Name, "error", persistErr.Message, "recommendation", persistErr.Recommendation)
-	if a.portlessFallback == nil {
+	// Replace a generic fallback (e.g. left over from a contended DNS
+	// registry, which never carries a recommendation) once this specific,
+	// actionable diagnosis is available — otherwise the "only fill when
+	// nil" guard would silently keep showing the earlier, less useful
+	// message for the rest of the session.
+	upgrade := a.portlessFallback == nil ||
+		(persistErr.Recommendation != "" && a.portlessFallback.Recommendation == "")
+	if upgrade {
 		a.portlessFallback = &PortlessFallbackStatus{
 			TunnelID:       cfg.ID,
 			Message:        persistErr.Message,

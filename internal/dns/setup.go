@@ -2,6 +2,7 @@ package dns
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -55,14 +56,33 @@ func EnsureSystemConfigured(ctx context.Context, requirements SetupRequirements)
 	}
 	slog.Info("portless: launching elevated system setup", "exe", exe,
 		"privilegedPortRedirect", requirements.PrivilegedPortRedirect)
-	if err := runElevatedSetup(ctx, exe, args); err != nil {
-		return err
+	setupErr := runElevatedSetup(ctx, exe, args)
+	if setupErr == nil && IsSystemConfigured(requirements) {
+		return nil
 	}
-	if !IsSystemConfigured(requirements) {
-		message, recommendation, command := classifyPersistenceFailure(GetSystemServiceStatus())
+	return classifySetupOutcome(setupErr, GetSystemServiceStatus())
+}
+
+// classifySetupOutcome decides what EnsureSystemConfigured should return once
+// the elevated setup step has run (or failed) and the system might still be
+// unconfigured. Split out from EnsureSystemConfigured so this decision is
+// unit-testable without the real OS calls it's built on.
+//
+// Both a non-nil setupErr and a silently-still-unconfigured system (setupErr
+// nil) land here: on the modern macOS path, a service the OS already
+// considers approved and enabled but stuck can surface either way —
+// ensurePortlessService in service_darwin.go returns a plain error from its
+// own timeout instead of leaving setupErr nil — and both need the same
+// triage rather than only checking the silent case.
+func classifySetupOutcome(setupErr error, status SystemServiceStatus) error {
+	message, recommendation, command := classifyPersistenceFailure(status)
+	if recommendation != "" {
 		return &PersistenceError{Message: message, Recommendation: recommendation, Command: command}
 	}
-	return nil
+	if setupErr != nil {
+		return setupErr
+	}
+	return errors.New(message)
 }
 
 // PersistenceError indicates that an elevated setup attempt returned no Go

@@ -117,6 +117,35 @@ func TestHandlePortlessSetupPersistenceFailureDegradesWithRecommendation(t *test
 	}
 }
 
+func TestHandlePortlessSetupPersistenceFailureUpgradesGenericFallback(t *testing.T) {
+	app := &App{
+		manager: ssh.NewManager(func(ssh.StatusEvent) {}, nil),
+		logBuf:  make(map[string][]config.LogEntry),
+	}
+	cfg := config.TunnelConfig{ID: "bastion", Name: "bastion"}
+
+	// A prior, unrelated DNS-registry conflict already installed the
+	// generic fallback, which never carries a recommendation.
+	if !app.handlePortlessDNSStartFailure(cfg, fmt.Errorf("binding UDP: %w", syscall.EADDRINUSE)) {
+		t.Fatal("setup precondition: address conflict should degrade")
+	}
+	if app.portlessFallback == nil || app.portlessFallback.Recommendation != "" {
+		t.Fatalf("setup precondition: expected a generic fallback, got %+v", app.portlessFallback)
+	}
+
+	persistErr := &dns.PersistenceError{
+		Message:        "the helper service is approved, but its prerequisites never took effect",
+		Recommendation: "reinstall the app",
+		Command:        "sudo sfltool resetbtm",
+	}
+	if !app.handlePortlessSetupPersistenceFailure(cfg, persistErr) {
+		t.Fatal("a PersistenceError should degrade instead of remaining fatal")
+	}
+	if app.portlessFallback.Recommendation != persistErr.Recommendation || app.portlessFallback.Command != persistErr.Command {
+		t.Fatalf("a more specific diagnosis must replace the generic fallback, got %+v", app.portlessFallback)
+	}
+}
+
 func TestHandlePortlessSetupPersistenceFailureKeepsOtherErrorsFatal(t *testing.T) {
 	app := &App{
 		manager: ssh.NewManager(func(ssh.StatusEvent) {}, nil),

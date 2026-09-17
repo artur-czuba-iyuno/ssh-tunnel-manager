@@ -143,15 +143,19 @@ export namespace main {
 	export class PortlessFallbackStatus {
 	    tunnelId: string;
 	    message: string;
+	    recommendation?: string;
+	    command?: string;
 
 	    static createFrom(source: any = {}) {
 	        return new PortlessFallbackStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.tunnelId = source["tunnelId"];
 	        this.message = source["message"];
+	        this.recommendation = source["recommendation"];
+	        this.command = source["command"];
 	    }
 	}
 	export class PortlessServiceStatus {
